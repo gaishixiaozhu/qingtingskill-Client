@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-蜻蜓志愿数据查询 - Client OpenClaw Skill
+蜻蜓志愿数据查询 - Client OpenClaw Skill v2.0
 
 功能：
 1. 验证API Key（识别客户、验证权限）
 2. 接收用户问题
 3. 转发到Server OpenClaw
-4. 原封不动返回答案
-5. 三必填条件提醒
+4. 异步进度反馈
+5. 原封不动返回答案
 
 部署位置：Client OpenClaw的skills目录
 """
@@ -30,8 +30,8 @@ class QingtingQuerySkill:
     1. 接收用户问题
     2. 检查API Key
     3. 检查是否需要三必填条件提醒
-    4. 转发到Server OpenClaw
-    5. 返回答案
+    4. 使用异步接口获取job_id
+    5. 轮询进度，返回答案
     """
     
     def __init__(self, api_key: str = None, server_url: str = None):
@@ -39,74 +39,100 @@ class QingtingQuerySkill:
         self.server_url = (server_url or SERVER_URL).rstrip('/')
         self.timeout = TIMEOUT
         self.retries = RETRIES
+        self.poll_interval = 1  # 轮询间隔（秒）
+        self.max_polls = 120    # 最多轮询120次（约2分钟）
     
-    def _make_request(self, user_id: str, session_id: str,
-                     question: str, context: List[Dict] = None) -> Dict:
-        """发送请求到Server OpenClaw"""
-        url = f"{self.server_url}/api/v1/chat"
+    def _submit_async(self, user_id: str, session_id: str, question: str) -> Dict:
+        """提交异步任务，返回job_id"""
+        url = f"{self.server_url}/api/v1/chat/async"
         payload = {
             "user_id": user_id,
             "session_id": session_id,
-            "question": question,
-            "context": context or []
+            "question": question
         }
-        
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": self.api_key
         }
         
-        last_error = None
-        for attempt in range(self.retries):
-            try:
-                resp = requests.post(
-                    url,
-                    json=payload,
-                    timeout=self.timeout,
-                    headers=headers
-                )
-                
-                if resp.status_code == 200:
-                    return resp.json()
-                elif resp.status_code == 401:
-                    return {
-                        "success": False,
-                        "answer": "API Key无效或已过期，请检查配置或联系管理员。"
-                    }
-                elif resp.status_code >= 500:
-                    last_error = f"Server错误: {resp.status_code}"
-                    continue
-                else:
-                    return {
-                        "success": False,
-                        "answer": f"请求失败：{resp.status_code}"
-                    }
-            
-            except requests.exceptions.Timeout:
-                last_error = "请求超时"
-                continue
-            except requests.exceptions.ConnectionError:
-                last_error = "无法连接到服务器"
-                continue
-            except Exception as e:
-                last_error = str(e)
-                continue
+        resp = requests.post(url, json=payload, timeout=30, headers=headers)
+        if resp.status_code == 200:
+            return resp.json()
+        elif resp.status_code == 401:
+            return {"success": False, "error": "API Key无效"}
+        else:
+            return {"success": False, "error": f"提交失败: {resp.status_code}"}
+    
+    def _poll_status(self, job_id: str) -> Dict:
+        """轮询任务状态"""
+        url = f"{self.server_url}/api/v1/job/{job_id}"
+        headers = {"X-API-Key": self.api_key}
         
+        resp = requests.get(url, timeout=10, headers=headers)
+        if resp.status_code == 200:
+            return resp.json()
+        return {"status": "error", "message": "查询状态失败"}
+    
+    def _make_request(self, user_id: str, session_id: str,
+                     question: str, context: List[Dict] = None) -> Dict:
+        """发送请求到Server OpenClaw（使用异步接口）"""
+        
+        # Step 1: 提交异步任务
+        submit_result = self._submit_async(user_id, session_id, question)
+        
+        if not submit_result.get("success"):
+            return {
+                "success": False,
+                "answer": submit_result.get("error", "提交任务失败")
+            }
+        
+        job_id = submit_result.get("job_id")
+        if not job_id:
+            return {
+                "success": False,
+                "answer": "获取任务ID失败"
+            }
+        
+        # Step 2: 轮询等待结果
+        last_status = None
+        for i in range(self.max_polls):
+            time.sleep(self.poll_interval)
+            
+            status_result = self._poll_status(job_id)
+            status = status_result.get("status")
+            
+            # 状态变化时显示进度（可选，用于调试）
+            if status != last_status:
+                last_status = status
+                progress = status_result.get("progress", 0)
+                message = status_result.get("message", "")
+            
+            if status == "completed":
+                # 任务完成，返回答案
+                answer = status_result.get("answer", "")
+                return {
+                    "success": True,
+                    "answer": answer,
+                    "job_id": job_id
+                }
+            
+            elif status in ("error", "failed"):
+                return {
+                    "success": False,
+                    "answer": status_result.get("message", "任务处理失败")
+                }
+        
+        # 超时
         return {
             "success": False,
-            "answer": f"连接服务器失败：{last_error}。请稍后再试。"
+            "answer": "处理超时，请稍后再试"
         }
     
     def _check_conditions(self, question: str) -> Optional[str]:
-        """
-        检查三必填条件
-        
-        Returns:
-            如果缺少条件，返回追问消息；否则返回None
-        """
+        """检查三必填条件"""
         q = question.lower()
         
-        recommend_keywords = ["志愿", "推荐", "方案", "填报", "生成"]
+        recommend_keywords = ["志愿", "推荐", "方案", "填报", "生成", "多少个"]
         has_recommend = any(kw in q for kw in recommend_keywords)
         
         if not has_recommend:
@@ -146,9 +172,7 @@ class QingtingQuerySkill:
     
     def chat(self, user_input: str, user_id: str = None,
              session_id: str = None) -> Dict:
-        """
-        处理用户消息
-        """
+        """处理用户消息"""
         # 检查API Key
         if not self.api_key:
             return {
@@ -178,14 +202,12 @@ class QingtingQuerySkill:
             return {
                 "success": True,
                 "answer": result.get("answer", ""),
-                "intent": result.get("intent"),
-                "conditions": result.get("conditions", {})
+                "job_id": result.get("job_id")
             }
         else:
             return {
                 "success": False,
-                "answer": result.get("answer", "处理失败"),
-                "error": result.get("error")
+                "answer": result.get("answer", "处理失败")
             }
     
     def health_check(self) -> bool:
@@ -227,9 +249,7 @@ def get_skill(api_key: str = None) -> QingtingQuerySkill:
 
 def handle_message(user_input: str, user_id: str = None,
                    session_id: str = None, api_key: str = None) -> str:
-    """
-    Skill主入口函数
-    """
+    """Skill主入口函数"""
     skill = get_skill(api_key=api_key)
     result = skill.chat(user_input, user_id, session_id)
     return result.get("answer", "")
@@ -251,8 +271,11 @@ if __name__ == "__main__":
         skill.server_url = args.server
     
     if args.question:
+        start = time.time()
         result = skill.chat(args.question)
-        print("\n" + "=" * 60)
+        elapsed = time.time() - start
+        print(f"\n用时: {elapsed:.1f}秒")
+        print("=" * 60)
         print("答案：")
         print("=" * 60)
         print(result.get("answer", ""))
