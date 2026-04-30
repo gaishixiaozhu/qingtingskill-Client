@@ -6,7 +6,7 @@ Client Skill 配置
 """
 
 # ============ Server OpenClaw 地址（已配置）============
-SERVER_URL = "http://114.215.127.115:5007"
+SERVER_URL = "https://ocs.qingtingai.pro"
 
 # ============ 请求配置 ============
 TIMEOUT = 30      # 请求超时（秒）
