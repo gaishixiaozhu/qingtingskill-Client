@@ -151,7 +151,15 @@ class DisplayRenderer:
             lines.append("暂无数据")
             return "\n".join(lines)
         
-        if columns:
+        # 从第一项推断实际字段key（columns是中文展示名，items里是英文key）
+        if columns and items and isinstance(items[0], dict):
+            item_keys = list(items[0].keys())
+            # columns 和 items keys 对齐：按位置映射
+            if len(columns) <= len(item_keys):
+                key_map = dict(zip(columns, item_keys[:len(columns)]))
+            else:
+                key_map = {c: c for c in columns}
+            
             header = "| " + " | ".join(columns) + " |"
             sep = "|" + "|".join([" :--- "] * len(columns)) + "|"
             lines.append(header)
@@ -159,11 +167,14 @@ class DisplayRenderer:
         
         for item in items[:50]:
             if isinstance(item, dict):
-                row = []
-                for col in columns:
-                    val = item.get(col, "") or ""
-                    row.append(str(val))
-                lines.append("| " + " | ".join(row) + " |")
+                if columns and key_map:
+                    row = []
+                    for col in columns:
+                        val = item.get(key_map.get(col, col), "") or ""
+                        row.append(str(val))
+                    lines.append("| " + " | ".join(row) + " |")
+                else:
+                    lines.append(" | ".join(str(v) for v in item.values()))
             else:
                 lines.append(str(item))
         
