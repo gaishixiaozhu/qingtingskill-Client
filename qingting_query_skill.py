@@ -444,7 +444,7 @@ def get_skill(api_key: str = None) -> QingtingQuerySkill:
 
 def handle_message(user_input: str, user_id: str = None,
                    session_id: str = None, api_key: str = None) -> str:
-    """Skill主入口函数"""
+    """Skill主入口函数 - 原封不动转发用户问题到服务端，不做任何改写"""
     skill = get_skill(api_key=api_key)
     result = skill.chat(user_input, user_id, session_id)
     return result.get("answer", "")
