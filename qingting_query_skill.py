@@ -89,7 +89,7 @@ class DisplayRenderer:
                 school = item.get("school", "")
                 pro = item.get("pro", "")
                 
-                # 备注合并：院校备注 + 专业备注
+                # 备注合并
                 school_note = item.get("school_note", "") or ""
                 pro_note = item.get("pro_note", "") or ""
                 notes = []
@@ -113,6 +113,12 @@ class DisplayRenderer:
                 rank = item.get("rank", "-")
                 diff = item.get("diff", 0)
                 
+                # 历年数据
+                score_2024 = item.get("score_2024", "-") or "-"
+                rank_2024 = item.get("rank_2024", "-") or "-"
+                score_2023 = item.get("score_2023", "-") or "-"
+                rank_2023 = item.get("rank_2023", "-") or "-"
+                
                 # 分差颜色标记
                 if diff > 0:
                     diff_str = f"+{diff}📈"
@@ -121,7 +127,11 @@ class DisplayRenderer:
                 else:
                     diff_str = f"{diff}📉"
                 
-                row = [school, pro, note_str, str(plan), tuition_str, str(score), str(rank), diff_str]
+                row = [school, pro, note_str, str(plan), tuition_str,
+                       str(score), str(rank),
+                       str(score_2024), str(rank_2024),
+                       str(score_2023), str(rank_2023),
+                       diff_str]
                 lines.append("| " + " | ".join(row) + " |")
             
             lines.append("")
